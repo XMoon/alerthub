@@ -81,22 +81,24 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
         url = f"{alert_group.externalURL}/#/alerts?receiver={alert_group.receiver}"
         # alerts
         alert_msg = ""
-        for alert in firing_alerts:
+        if firing_alerts:
             alert_msg += "Alerts Firing\n"
-            alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-            alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
-            alert_msg += f"Details:\n"
-            for label in alert.labels:
-                if label not in ['severity', 'summary']:
-                    alert_msg += f"  - {label}: {alert.labels[label]}\n"
-        for alert in resolved_alerts:
+            for alert in firing_alerts:
+                alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
+                alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+                alert_msg += f"Details:\n"
+                for label in alert.labels:
+                    if label not in ['severity', 'summary']:
+                        alert_msg += f"  - {label}: {alert.labels[label]}\n"
+        if resolved_alerts:
             alert_msg += "Alerts Resolved\n"
-            alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-            alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
-            alert_msg += f"Details:\n"
-            for label in alert.labels:
-                if label not in ['severity', 'summary']:
-                    alert_msg += f"  - {label}: {alert.labels[label]}\n"
+            for alert in resolved_alerts:
+                alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
+                alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+                alert_msg += f"Details:\n"
+                for label in alert.labels:
+                    if label not in ['severity', 'summary']:
+                        alert_msg += f"  - {label}: {alert.labels[label]}\n"
         alerthub.send(alert_msg, title=title, group="Alertmanager", url=url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
