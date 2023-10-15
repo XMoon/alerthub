@@ -85,8 +85,9 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
         if firing_alerts:
             alert_msg += "Alerts Firing\n"
             for alert in firing_alerts:
+                graphurl = alert.generatorURL.replace('"','%22')
                 alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-                alert_msg += f"Graph:  <a href=\"{alert.generatorURL.replace('"','%22')}\" >Grafana URL</a>\n"
+                alert_msg += f"Graph:  <a href=\"{graphurl}\" >Grafana URL</a>\n"
                 alert_msg += f"Details:\n"
                 for label in alert.labels:
                     if label not in ['severity', 'summary']:
@@ -94,8 +95,9 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
         if resolved_alerts:
             alert_msg += "Alerts Resolved\n"
             for alert in resolved_alerts:
+                graphurl = alert.generatorURL.replace('"','%22')
                 alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-                alert_msg += f"Graph:  <a href=\"{alert.generatorURL.replace('"','%22')}\" >Grafana URL</a>\n"
+                alert_msg += f"Graph:  <a href=\"{graphurl}\" >Grafana URL</a>\n"
                 alert_msg += f"Details:\n"
                 for label in alert.labels:
                     if label not in ['severity', 'summary']:

@@ -73,7 +73,8 @@ class AlertHub:
             text += f"[{group or 'UNKNOWN'}] {title}\n"
         text += body
         if url:
-            text += f"URL:{url}"
+            url = url.replace('"','%22')
+            text += f"\nURL: <a href=\"{url}\" >Link</a>"
         data = {
             "text": text,
             "chat_id": self.config["telegram_chat_id"],
