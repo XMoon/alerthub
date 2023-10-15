@@ -1,7 +1,8 @@
 import logging
-from uvicorn.logging import DefaultFormatter
 from typing import List, Dict, Any, Optional
+import urllib.parse
 
+from uvicorn.logging import DefaultFormatter
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -85,7 +86,7 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
             alert_msg += "Alerts Firing\n"
             for alert in firing_alerts:
                 alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-                alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+                alert_msg += f"Graph:  <a href=\"{alert.generatorURL.replace('"','%22')}\" >Grafana URL</a>\n"
                 alert_msg += f"Details:\n"
                 for label in alert.labels:
                     if label not in ['severity', 'summary']:
@@ -94,7 +95,7 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
             alert_msg += "Alerts Resolved\n"
             for alert in resolved_alerts:
                 alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-                alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+                alert_msg += f"Graph:  <a href=\"{alert.generatorURL.replace('"','%22')}\" >Grafana URL</a>\n"
                 alert_msg += f"Details:\n"
                 for label in alert.labels:
                     if label not in ['severity', 'summary']:
