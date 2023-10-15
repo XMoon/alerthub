@@ -63,7 +63,7 @@ async def startup_event():
 
 @app.post("/alert")
 def alert(request: Request, alert: CustomAlert) -> Any:
-    return alerthub.send(**alert.model_dump())
+    return alerthub.send(alert.model_dump())
 
 @app.post("/alertmanager-webhook")
 def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str, str]:
@@ -78,24 +78,22 @@ def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str,
         for grouplable in alert_group.groupLabels:
             title += " " + grouplable + ":" + alert_group.groupLabels[grouplable]
         # url 
-        url = f"{alert_group.externalURL}/#/alerts?receiver=f{alert_group.receiver}"
+        url = f"{alert_group.externalURL}/#/alerts?receiver={alert_group.receiver}"
         # alerts
         alert_msg = ""
         for alert in firing_alerts:
-            alert_msg += "**Alerts Firing**\n"
-            alert_msg += f"#### [{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-            alert_msg += f"**Description:**  {alert.annotations['description']}\n"
-            alert_msg += f"**Graph:**  {alert.generatorURL}\n"
-            alert_msg += f"**Details:**\n"
+            alert_msg += "Alerts Firing\n"
+            alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
+            alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+            alert_msg += f"Details:\n"
             for label in alert.labels:
                 if label not in ['severity', 'summary']:
                     alert_msg += f"  - {label}: {alert.labels[label]}\n"
         for alert in resolved_alerts:
-            alert_msg += "**Alerts Resolved**\n"
-            alert_msg += f"#### [{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
-            alert_msg += f"**Description:**  {alert.annotations['description']}\n"
-            alert_msg += f"**Graph:**  {alert.generatorURL}\n"
-            alert_msg += f"**Details:**\n"
+            alert_msg += "Alerts Resolved\n"
+            alert_msg += f"[{alert.labels['severity'].upper()}] { alert.annotations['summary'] }\n"
+            alert_msg += f"Graph:  <a href=\"{alert.generatorURL}\" >Grafana URL</a>\n"
+            alert_msg += f"Details:\n"
             for label in alert.labels:
                 if label not in ['severity', 'summary']:
                     alert_msg += f"  - {label}: {alert.labels[label]}\n"

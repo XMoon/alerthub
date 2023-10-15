@@ -78,6 +78,7 @@ class AlertHub:
             "text": text,
             "chat_id": self.config["telegram_chat_id"],
             "disable_web_page_preview": True,
+            "parse_mode": "HTML",
         }
         logging.debug(f"[telegram][data]{text}")
         telegram_url = f"https://api.telegram.org/bot{self.config['telegram_bot_token']}/sendMessage"
