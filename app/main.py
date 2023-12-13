@@ -64,7 +64,7 @@ async def startup_event():
 
 @app.post("/alert")
 def alert(request: Request, alert: CustomAlert) -> Any:
-    return alerthub.send(alert.model_dump())
+    return alerthub.send(**alert.model_dump())
 
 @app.post("/alertmanager-webhook")
 def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str, str]:
