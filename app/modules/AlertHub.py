@@ -1,13 +1,18 @@
-import os
+from concurrent.futures import Future, as_completed
 import logging
+import os
 from typing import Optional
+
+from requests import Response
 from requests.adapters import HTTPAdapter
 from requests_futures.sessions import FuturesSession
-from concurrent.futures import Future, as_completed
+
 
 class AlerHubException(Exception):
     def __init__(self, name: str):
+        super().__init__(name)
         self.name = name
+
 
 class AlertHub:
     def __init__(self, config: Optional[dict] = None) -> None:
@@ -34,6 +39,28 @@ class AlertHub:
         if self.config['socks_proxy']:
             self.session.proxies = {'http': self.config['socks_proxy'],
                                     'https': self.config['socks_proxy']}
+
+    @staticmethod
+    def _get_error_reason(resp: Response) -> str:
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+
+        if isinstance(payload, dict):
+            for key in ("message", "detail", "error", "description"):
+                value = payload.get(key)
+                if value:
+                    return str(value)
+            return str(payload)
+
+        if payload is not None:
+            return str(payload)
+
+        if resp.text:
+            return resp.text.strip()
+
+        return resp.reason or "unknown error"
 
     def send_bark(
         self,
@@ -100,16 +127,22 @@ class AlertHub:
             futures.append(self.send_bark(body, title, level, url, group))
         if self.config["telegram_bot_token"]:
             futures.append(self.send_telegram(body, title, level, url, group))
-        if len(futures) == 0:
+        if not futures:
             raise AlerHubException("Can't found config, not alert sent!!")
+
         for future in as_completed(futures):
-            resp = future.result()
-            if resp.status_code >= 300 and resp.status_code < 200:
-                msg = f"send msg to {future.alert_type} failed!!"
-                logging.error(msg)
-                raise AlerHubException(msg)
-            else:
-                logging.info(f"sent msg to {future.alert_type} : {resp.text}")
+            response = future.result()
+            if 200 <= response.status_code < 300:
+                logging.info(f"sent msg to {future.alert_type} : {response.text}")
+                continue
+
+            reason = self._get_error_reason(response)
+            msg = (
+                f"send msg to {future.alert_type} failed with status "
+                f"{response.status_code} {response.reason}: {reason}"
+            )
+            logging.error(msg)
+            raise AlerHubException(msg)
 
 if __name__ == '__main__':
     logging.getLogger().setLevel(logging.DEBUG)
