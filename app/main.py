@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.modules.AlertHub import AlertHub, AlerHubException
+from app.modules.json_utils import normalize_json_body
 
 # modules
 app = FastAPI()
@@ -91,6 +92,46 @@ def _build_alert_message(firing_alerts: List[Alert], resolved_alerts: List[Alert
         _build_alert_section("Alerts Firing", firing_alerts)
         + _build_alert_section("Alerts Resolved", resolved_alerts)
     )
+
+
+def _is_json_request(request: Request) -> bool:
+    content_type = request.headers.get("content-type", "")
+    return request.method in {"POST", "PUT", "PATCH"} and (
+        "application/json" in content_type or "+json" in content_type
+    )
+
+
+@app.middleware("http")
+async def repair_non_standard_json(request: Request, call_next):
+    if not _is_json_request(request):
+        return await call_next(request)
+
+    body = await request.body()
+    normalized_body, repaired = normalize_json_body(body)
+
+    if repaired:
+        logging.warning(
+            "Recovered non-standard JSON payload on %s %s",
+            request.method,
+            request.url.path,
+        )
+
+    body_sent = False
+
+    async def receive() -> Dict[str, Any]:
+        nonlocal body_sent
+        if body_sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        body_sent = True
+        return {
+            "type": "http.request",
+            "body": normalized_body,
+            "more_body": False,
+        }
+
+    request = Request(request.scope, receive)
+    return await call_next(request)
 
 
 @app.exception_handler(AlerHubException)
