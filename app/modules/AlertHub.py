@@ -7,6 +7,9 @@ from requests import Response
 from requests.adapters import HTTPAdapter
 from requests_futures.sessions import FuturesSession
 
+# Create alerthub named logger
+logger = logging.getLogger("alerthub")
+
 
 class AlerHubException(Exception):
     def __init__(self, name: str):
@@ -26,9 +29,13 @@ class AlertHub:
                 "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
                 # proxy
                 "socks_proxy": os.environ.get("SOCKS_PROXY", ""),
+                # timeout
+                "request_timeout": int(os.environ.get("REQUEST_TIMEOUT", 10)),
             }
         else:
             self.config = config
+
+        self.timeout = int(self.config.get("request_timeout", 10))
         max_workers = 5
         self.session = FuturesSession(max_workers=max_workers)
         a = HTTPAdapter(
@@ -36,9 +43,22 @@ class AlertHub:
         )
         self.session.mount("http://", a)
         self.session.mount("https://", a)
-        if self.config['socks_proxy']:
-            self.session.proxies = {'http': self.config['socks_proxy'],
-                                    'https': self.config['socks_proxy']}
+        if self.config.get('socks_proxy'):
+            self.session.proxies = {
+                'http': self.config['socks_proxy'],
+                'https': self.config['socks_proxy']
+            }
+
+        # Validate config at startup
+        channels = []
+        if self.config.get("bark_key"):
+            channels.append("bark")
+        if self.config.get("telegram_bot_token"):
+            channels.append("telegram")
+        if channels:
+            logger.info("AlertHub initialized with channels: %s", ", ".join(channels))
+        else:
+            logger.warning("AlertHub: no notification channels configured")
 
     @staticmethod
     def _get_error_reason(resp: Response) -> str:
@@ -81,11 +101,9 @@ class AlertHub:
             data["url"] = url
         if group:
             data["group"] = group
-        logging.debug(f"[bark][data]{data}")
+        logger.debug("[bark][data] %s", data)
         bark_url = f"{self.config['bark_url']}/{self.config['bark_key']}"
-        future = self.session.post(bark_url, json=data)
-        future.alert_type = 'bark'
-        return future
+        return self.session.post(bark_url, json=data, timeout=self.timeout)
 
     def send_telegram(
         self,
@@ -97,10 +115,15 @@ class AlertHub:
     ) -> Future:
         text = ""
         if title:
-            text += f"[{group or 'UNKNOWN'}] {title}\n"
+            text += f"[{group or 'UNKNOWN'}]"
+            if level:
+                text += f" [{level.upper()}]"
+            text += f" {title}\n"
+        elif level:
+            text += f"[{level.upper()}]\n"
         text += body
         if url:
-            url = url.replace('"','%22')
+            url = url.replace('"', '%22')
             text += f"\nURL: <a href=\"{url}\" >Link</a>"
         data = {
             "text": text,
@@ -108,11 +131,9 @@ class AlertHub:
             "disable_web_page_preview": True,
             "parse_mode": "HTML",
         }
-        logging.debug(f"[telegram][data]{text}")
+        logger.debug("[telegram][data] %s", text)
         telegram_url = f"https://api.telegram.org/bot{self.config['telegram_bot_token']}/sendMessage"
-        future = self.session.post(telegram_url, json=data)
-        future.alert_type = 'telegram'
-        return future
+        return self.session.post(telegram_url, json=data, timeout=self.timeout)
 
     def send(
         self,
@@ -122,29 +143,35 @@ class AlertHub:
         url: Optional[str] = None,
         group: Optional[str] = None,
     ) -> None:
-        futures = []
-        if self.config["bark_key"]:
-            futures.append(self.send_bark(body, title, level, url, group))
-        if self.config["telegram_bot_token"]:
-            futures.append(self.send_telegram(body, title, level, url, group))
-        if not futures:
+        future_map: dict[Future, str] = {}
+        if self.config.get("bark_key"):
+            future_map[self.send_bark(body, title, level, url, group)] = "bark"
+        if self.config.get("telegram_bot_token"):
+            future_map[self.send_telegram(body, title, level, url, group)] = "telegram"
+        if not future_map:
             raise AlerHubException("Can't found config, not alert sent!!")
 
-        for future in as_completed(futures):
-            response = future.result()
-            if 200 <= response.status_code < 300:
-                logging.info(f"sent msg to {future.alert_type} : {response.text}")
-                continue
+        errors = []
+        for future in as_completed(future_map):
+            channel = future_map[future]
+            try:
+                response = future.result()
+                if 200 <= response.status_code < 300:
+                    logger.info("sent msg to %s : %s", channel, response.text)
+                else:
+                    reason = self._get_error_reason(response)
+                    errors.append(f"{channel}: {response.status_code} {response.reason} - {reason}")
+            except Exception as exc:
+                errors.append(f"{channel}: {exc}")
 
-            reason = self._get_error_reason(response)
-            msg = (
-                f"send msg to {future.alert_type} failed with status "
-                f"{response.status_code} {response.reason}: {reason}"
-            )
-            logging.error(msg)
-            raise AlerHubException(msg)
+        if errors:
+            raise AlerHubException("Failed to send: " + "; ".join(errors))
+
+    def close(self) -> None:
+        self.session.close()
+
 
 if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
+    logging.basicConfig(level=logging.DEBUG)
     alerthub = AlertHub()
     alerthub.send('test alert from alerthub', title='test alert', group='test')

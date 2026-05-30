@@ -1,7 +1,7 @@
 [project]
 name = "alerthub"
 version = "0.1.1"
-description = "Add your description here"
+description = "Lightweight alert forwarding gateway for Bark and Telegram"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -11,3 +11,12 @@ dependencies = [
     "requests-futures>=1.0.2",
     "uvicorn>=0.42.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.28",
+    "pytest-mock>=3.14",
+    "respx>=0.22",
+]
+

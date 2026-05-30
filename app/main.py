@@ -1,8 +1,8 @@
+from contextlib import asynccontextmanager
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
-from uvicorn.logging import DefaultFormatter
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -11,32 +11,11 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.modules.AlertHub import AlertHub, AlerHubException
+from app.formatters import AlertGroup, build_alert_message, build_alert_title
 
-# modules
-app = FastAPI()
-alerthub = AlertHub()
-
-
-class Alert(BaseModel):
-    status: str
-    labels: Dict[str, Any]
-    annotations: Dict[str, Any]
-    startsAt: str
-    endsAt: str
-    generatorURL: str
-
-
-class AlertGroup(BaseModel):
-    version: str
-    groupKey: str
-    truncatedAlerts: int
-    status: str
-    receiver: str
-    groupLabels: Dict[str, Any]
-    commonLabels: Dict[str, Any]
-    commonAnnotations: Dict[str, Any]
-    externalURL: str
-    alerts: List[Alert]
+# Create alerthub named logger
+logger = logging.getLogger("alerthub")
+logger.propagate = False
 
 
 class CustomAlert(BaseModel):
@@ -47,55 +26,46 @@ class CustomAlert(BaseModel):
     group: Optional[str] = None
 
 
-def _build_alert_title(alert_group: AlertGroup, firing_count: int) -> str:
-    if alert_group.status == "firing":
-        title = f"[{alert_group.status.upper()}: {firing_count}]"
-    else:
-        title = f"[{alert_group.status.upper()}]"
-
-    for label, value in alert_group.groupLabels.items():
-        title += f" {label}:{value}"
-
-    return title
+class AlertResponse(BaseModel):
+    status: str = "ok"
 
 
-def _format_alert_details(alert: Alert) -> str:
-    graph_url = alert.generatorURL.replace('"', "%22")
-    lines = [
-        f"[{alert.labels['severity'].upper()}] {alert.annotations['summary']}",
-        f'Graph:  <a href="{graph_url}" >Grafana URL</a>',
-        "Details:",
-    ]
-
-    for label, value in alert.labels.items():
-        if label in {"severity", "summary"}:
-            continue
-        lines.append(f"  - {label}: {value}")
-
-    return "\n".join(lines)
-
-
-def _build_alert_section(title: str, alerts: List[Alert]) -> str:
-    if not alerts:
-        return ""
-
-    lines = [title]
-    for alert in alerts:
-        lines.append(_format_alert_details(alert))
-
-    return "\n".join(lines) + "\n"
+def _setup_logging():
+    """Configure alerthub named logger with appropriate formatter.
+    
+    Tries to import Uvicorn's DefaultFormatter to maintain color consistency in local dev,
+    but falls back gracefully to a standard Formatter if Uvicorn is not available or used.
+    """
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        try:
+            from uvicorn.logging import DefaultFormatter
+            console_formatter = DefaultFormatter("%(levelprefix)s %(message)s")
+        except ImportError:
+            console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+        handler.setFormatter(console_formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
 
 
-def _build_alert_message(firing_alerts: List[Alert], resolved_alerts: List[Alert]) -> str:
-    return (
-        _build_alert_section("Alerts Firing", firing_alerts)
-        + _build_alert_section("Alerts Resolved", resolved_alerts)
-    )
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _setup_logging()
+    app.state.alerthub = AlertHub()
+    yield
+    app.state.alerthub.close()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+def get_alerthub(request: Request) -> AlertHub:
+    return request.app.state.alerthub
 
 
 @app.exception_handler(AlerHubException)
 async def alerhub_exception_handler(request: Request, exc: AlerHubException):
-    logging.error(
+    logger.error(
         "AlerHubException on %s %s: %s",
         request.method,
         request.url.path,
@@ -114,7 +84,7 @@ async def alerhub_exception_handler(request: Request, exc: AlerHubException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logging.warning(
+    logger.warning(
         "422 Unprocessable Entity on %s %s: errors=%s body=%s",
         request.method,
         request.url.path,
@@ -127,7 +97,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_logging_handler(request: Request, exc: StarletteHTTPException):
     level = logging.ERROR if exc.status_code >= 500 else logging.WARNING
-    logging.log(
+    logger.log(
         level,
         "HTTP %s on %s %s: %s",
         exc.status_code,
@@ -140,7 +110,7 @@ async def http_exception_logging_handler(request: Request, exc: StarletteHTTPExc
 
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(request: Request, exc: Exception):
-    logging.exception(
+    logger.exception(
         "Unhandled exception on %s %s",
         request.method,
         request.url.path,
@@ -152,31 +122,26 @@ async def unexpected_exception_handler(request: Request, exc: Exception):
     )
 
 
-@app.on_event("startup")
-async def startup_event():
-    logger = logging.getLogger()
-    handler = logging.StreamHandler()
-    console_formatter = DefaultFormatter("%(levelprefix)s %(message)s")
-    handler.setFormatter(console_formatter)
-    logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
-@app.post("/alert")
-def alert(request: Request, alert: CustomAlert) -> Any:
-    return alerthub.send(**alert.model_dump())
+@app.post("/alert", response_model=AlertResponse)
+def alert(alert: CustomAlert, hub: AlertHub = Depends(get_alerthub)) -> AlertResponse:
+    hub.send(**alert.model_dump())
+    return AlertResponse()
 
 
-@app.post("/alertmanager-webhook")
-def alertmanager_webhook(request: Request, alert_group: AlertGroup) -> Dict[str, str]:
-    try:
-        firing_alerts = [alert for alert in alert_group.alerts if alert.status == "firing"]
-        resolved_alerts = [alert for alert in alert_group.alerts if alert.status == "resolved"]
-        title = _build_alert_title(alert_group, len(firing_alerts))
-        url = f"{alert_group.externalURL}/#/alerts?receiver={alert_group.receiver}"
-        alert_msg = _build_alert_message(firing_alerts, resolved_alerts)
-        alerthub.send(alert_msg, title=title, group="Alertmanager", url=url)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return {"status": "ok"}
+@app.post("/alertmanager-webhook", response_model=AlertResponse)
+def alertmanager_webhook(
+    alert_group: AlertGroup,
+    hub: AlertHub = Depends(get_alerthub)
+) -> AlertResponse:
+    firing_alerts = [a for a in alert_group.alerts if a.status == "firing"]
+    resolved_alerts = [a for a in alert_group.alerts if a.status == "resolved"]
+    title = build_alert_title(alert_group, len(firing_alerts))
+    url = f"{alert_group.externalURL}/#/alerts?receiver={alert_group.receiver}"
+    alert_msg = build_alert_message(firing_alerts, resolved_alerts)
+    hub.send(alert_msg, title=title, group="Alertmanager", url=url)
+    return AlertResponse()
