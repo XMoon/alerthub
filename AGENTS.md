@@ -4,7 +4,7 @@
 
 AlertHub 是一个轻量级的告警转发网关，基于 **FastAPI** 构建。它接收来自不同来源（如 Prometheus Alertmanager）的告警，并将其并发分发到多个通知渠道（Bark、Telegram）。
 
-- **版本**: 0.1.1
+- **版本**: 0.2.0
 - **Python**: ≥ 3.13
 - **包管理**: uv (pyproject.toml + uv.lock)
 - **运行方式**: uvicorn ASGI server
