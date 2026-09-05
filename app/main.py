@@ -4,7 +4,7 @@ from typing import Optional, Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.modules.AlertHub import AlertHub, AlerHubException
 
@@ -14,11 +14,19 @@ alerthub = AlertHub()
 
 
 class Alert(BaseModel):
-    body: str
+    body: Optional[str] = None
+    text: Optional[str] = None
     title: Optional[str] = None
+    summary: Optional[str] = None
     level: Optional[str] = None
     url: Optional[str] = None
     group: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_body_or_text(self) -> "Alert":
+        if self.body is None and self.text is None:
+            raise ValueError("body or text is required")
+        return self
 
 
 @app.exception_handler(AlerHubException)
@@ -43,4 +51,12 @@ async def startup_event():
 
 @app.post("/alert")
 async def alert(alert: Alert) -> Any:
-    return alerthub.send(**alert.model_dump())
+    body = alert.body if alert.body is not None else alert.text
+    title = alert.title if alert.title is not None else alert.summary
+    return alerthub.send(
+        body=body,
+        title=title,
+        level=alert.level,
+        url=alert.url,
+        group=alert.group,
+    )
