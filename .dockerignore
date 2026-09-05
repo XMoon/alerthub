@@ -1,0 +1,11 @@
+.git
+.venv
+.vscode
+.codex
+.agents
+__pycache__
+*.pyc
+tests
+.gitignore
+.python-version
+AGENTS.md
